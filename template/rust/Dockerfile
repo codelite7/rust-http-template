@@ -1,6 +1,6 @@
 FROM openfaas/of-watchdog:0.7.7 as watchdog
 
-FROM rust:1.42-alpine as builder
+FROM rust:1.42 as builder
 
 WORKDIR /home/rust
 
@@ -8,22 +8,20 @@ WORKDIR /home/rust
 COPY function ./function
 COPY main ./main
 
-RUN cd main && export RUSTFLAGS="-C target-feature=-crt-static" && cargo build --target x86_64-unknown-linux-musl --release
+RUN cd main && cargo build --release
 
-FROM alpine:3 as runner
+FROM debian:bullseye-slim as runner
 
 # Install packages and add non-root user
-RUN apk --no-cache add curl ca-certificates \
-    && addgroup -S app && adduser -S -g app app
-
-ENV USER=app
+RUN apt update && apt install -y curl ca-certificates && \
+    groupadd -r app && useradd -r -g app app
 
 # Copy of-watchdog binary
 COPY --from=watchdog /fwatchdog /usr/bin/fwatchdog
 RUN chmod +x /usr/bin/fwatchdog
 
 # Copy main binary
-COPY --from=watchdog /home/rust/target/x86_64-unknown-linux-musl/release/main /usr/bin/main
+COPY --from=builder /home/rust/main/target/release/main /usr/bin/main
 RUN chmod +x /usr/bin/main
 
 # Set up watchdog for HTTP mode
@@ -32,5 +30,8 @@ ENV mode="http"
 ENV upstream_url="http://127.0.0.1:3000"
 
 HEALTHCHECK --interval=3s CMD [ -e /tmp/.lock ] || exit 1
+
+# Run as non root user
+USER app
 
 CMD ["fwatchdog"]
